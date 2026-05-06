@@ -1,0 +1,6 @@
+# Project dependencies installed via pip.
+# The session frontend (jupyterlab/vscodium) is installed by its own
+# buildpack — don't add it here.
+numpy
+pandas
+matplotlib

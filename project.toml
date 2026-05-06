@@ -1,0 +1,12 @@
+[_]
+schema-version = "0.2"
+
+[io.buildpacks]
+builder = "ghcr.io/swissdatasciencecenter/renku-frontend-buildpacks/selector:0.4.0"
+
+  [[io.buildpacks.group]]
+  uri = "docker://ghcr.io/wesjdj/renku-opencode-buildpack:0.1.0"
+
+[[io.buildpacks.build.env]]
+name = "BP_RENKU_FRONTENDS"
+value = "jupyterlab,opencode"
