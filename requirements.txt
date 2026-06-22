@@ -1,6 +1,3 @@
-# Project dependencies installed via pip.
-# The session frontend (jupyterlab/vscodium) is installed by its own
-# buildpack — don't add it here.
-numpy
-pandas
-matplotlib
+# Intentionally empty — a language marker so the Renku buildpack build has something to
+# detect (mirrors SwissDataScienceCenter/build-coding-agent). The bridge is Node; pi is
+# baked via BP_RENKU_AI_AGENTS. No Python deps are needed.

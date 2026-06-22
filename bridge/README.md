@@ -1,0 +1,70 @@
+# pi-bridge
+
+Host-side bridge that exposes a [pi-agent](https://github.com/earendil-works) session over
+WebSocket so the watchOS/iOS clients in this repo can drive it. It embeds the pi SDK
+(`@earendil-works/pi-coding-agent`) directly — no subprocess parsing.
+
+In production this runs **inside a Renku 2.0 session** as the session's exposed app; the
+Renku gateway provides TLS + user auth in front of it. It also runs standalone for local dev.
+
+## What it does
+
+- Lists pi sessions from `~/.pi/agent/sessions/` (`GET /api/sessions`).
+- Attaches to one session over WebSocket (`/ws?session=<id>`), backfills history + state,
+  then streams live events (assistant text/thinking deltas, tool calls, turn/agent lifecycle).
+- Accepts commands: `prompt`, `steer`, `follow_up`, `abort`, `get_state`, `get_stats`, `list_sessions`.
+- **Approvals:** pi's permission prompts (the `pi-permission-system` `edit/write/git → ask`
+  config) surface through the SDK `ExtensionUIContext` and are forwarded as `approval_request`
+  events; the client replies with `approval_response`. The full N-option permission menu is
+  preserved (e.g. *Yes / Yes allow pattern for session / No / No with reason*).
+
+The wire protocol is defined once in [`src/protocol.ts`](src/protocol.ts) and mirrored by the
+Swift `PiKit` package. Keep them in lockstep.
+
+## Run locally
+
+```bash
+npm install
+npm run typecheck          # tsc --noEmit
+PORT=8088 npm start        # node --import tsx src/server.ts
+```
+
+Smoke test against a real session (uses your configured pi model):
+
+```bash
+# create a throwaway session
+mkdir -p /tmp/pi-bridge-test && cd /tmp/pi-bridge-test
+pi -p -n bridge-smoke "Reply with READY"
+
+# then, from bridge/:
+PI_BRIDGE_URL=http://127.0.0.1:8088 \
+  node --import tsx test/wsclient.ts <partial-session-id> "list the files here"
+```
+
+The test client prints streamed deltas and auto-approves any approval request.
+
+## Config (env)
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `PORT` / `PI_BRIDGE_PORT` | `8080` | Listen port (the Renku session app port). |
+| `HOST` | `0.0.0.0` | Bind address. |
+| `PI_BRIDGE_TOKEN` | _(unset)_ | Shared bearer token checked on `/api/*` and WS upgrade. Unset ⇒ auth disabled (dev). In Renku, inject via the session's `env_variable_overrides`. |
+
+## Layout
+
+| File | Role |
+|------|------|
+| `src/protocol.ts` | Wire types — single source of truth shared with `PiKit`. |
+| `src/pi-session.ts` | The only file touching pi SDK internals. Wraps `createAgentSessionRuntime` + `switchSession`, binds `uiContext` for approvals, translates `AgentSessionEvent` → wire events. |
+| `src/sessions-index.ts` | Read-only filesystem index of `~/.pi/agent/sessions/`. |
+| `src/server.ts` | Fastify REST + `@fastify/websocket`. |
+| `src/auth.ts` | Shared-token check (defense in depth behind the gateway). |
+| `test/wsclient.ts` | Manual smoke-test client. |
+
+## Notes
+
+- Pinned to `@earendil-works/pi-coding-agent@0.79.6`; the pre-1.0 runtime APIs are isolated in
+  `pi-session.ts`. Pin this to whatever version is baked into the Renku session image.
+- Runs via `tsx` (no build step). The session image just needs Node ≥ 20 + `npm install`.
+- Image attachments on `prompt` are not wired yet (text only in v1).

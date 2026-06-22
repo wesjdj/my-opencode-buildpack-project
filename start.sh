@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# Renku code-based session launch process (Procfile `web:`). Seeds pi config, brings up
+# Tailscale (userspace, static binaries fetched at boot), then runs the pi-bridge.
+#
+# The custom-image equivalent is renku-session/entrypoint.sh; keep the two in sync.
+set -euo pipefail
+log() { echo "[start] $*" >&2; }
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BRIDGE_DIR="${BRIDGE_DIR:-$ROOT/bridge}"
+if [ ! -f "$BRIDGE_DIR/src/server.ts" ]; then
+  # Builder may have relocated the Node app; try to find it.
+  found="$(find "$ROOT" -maxdepth 4 -path '*/src/server.ts' -print -quit 2>/dev/null || true)"
+  [ -n "$found" ] && BRIDGE_DIR="$(cd "$(dirname "$found")/.." && pwd)"
+fi
+PI_SKEL="${PI_SKEL:-}"
+if [ -z "$PI_SKEL" ]; then
+  for cand in "$ROOT/renku-session/pi" "$ROOT/pi" "$ROOT/pi-skel"; do
+    [ -f "$cand/settings.json" ] && { PI_SKEL="$cand"; break; }
+  done
+fi
+log "ROOT=$ROOT  BRIDGE_DIR=$BRIDGE_DIR  PI_SKEL=$PI_SKEL"
+
+# ---------------------------------------------------------------------------
+# 1. pi config (persist on the workspace mount, seed from the baked skeleton)
+# ---------------------------------------------------------------------------
+PI_AGENT_DIR="${PI_AGENT_DIR:-$HOME/.pi/agent}"
+if [ -n "${PI_PERSIST_DIR:-}" ]; then
+  mkdir -p "$PI_PERSIST_DIR"
+  if [ ! -e "$PI_AGENT_DIR" ] || [ -L "$PI_AGENT_DIR" ]; then
+    mkdir -p "$(dirname "$PI_AGENT_DIR")"; rm -f "$PI_AGENT_DIR"
+    ln -s "$PI_PERSIST_DIR" "$PI_AGENT_DIR"
+    log "pi agent dir -> $PI_PERSIST_DIR (persistent)"
+  fi
+fi
+mkdir -p "$PI_AGENT_DIR/extensions/pi-permission-system"
+[ -f "$PI_AGENT_DIR/settings.json" ] || cp "$PI_SKEL/settings.json" "$PI_AGENT_DIR/settings.json"
+[ -f "$PI_AGENT_DIR/extensions/pi-permission-system/config.json" ] \
+  || cp "$PI_SKEL/permission-system-config.json" \
+        "$PI_AGENT_DIR/extensions/pi-permission-system/config.json"
+
+# ---------------------------------------------------------------------------
+# 2. Tailscale (static userspace binaries — buildpacks can't apt-install a daemon)
+# ---------------------------------------------------------------------------
+if [ "${TS_ENABLE:-1}" = "1" ]; then
+  TS_BIN_DIR="${TS_BIN_DIR:-${PI_PERSIST_DIR:-$HOME}/.tailscale-bin}"
+  TS_SOCK="${TS_SOCK:-$HOME/tailscaled.sock}"
+  TS_STATE_DIR="${TS_STATE_DIR:-${PI_PERSIST_DIR:-$HOME}/.tailscale}"
+  TS_VERSION="${TS_VERSION:-1.98.4}"
+  mkdir -p "$TS_BIN_DIR" "$TS_STATE_DIR"
+
+  if [ ! -x "$TS_BIN_DIR/tailscaled" ]; then
+    case "$(uname -m)" in
+      x86_64) tsarch=amd64 ;; aarch64|arm64) tsarch=arm64 ;; *) tsarch=amd64 ;;
+    esac
+    pkg="tailscale_${TS_VERSION}_${tsarch}"
+    log "downloading ${pkg} static binaries…"
+    curl -fsSL "https://pkgs.tailscale.com/stable/${pkg}.tgz" \
+      | tar -xz -C "$TS_BIN_DIR" --strip-components=1 "${pkg}/tailscale" "${pkg}/tailscaled"
+  fi
+  export PATH="$TS_BIN_DIR:$PATH"
+  ts() { tailscale --socket="$TS_SOCK" "$@"; }
+
+  if [ -z "${TS_AUTHKEY:-}" ] && [ -n "${TS_AUTHKEY_FILE:-}" ] && [ -f "$TS_AUTHKEY_FILE" ]; then
+    TS_AUTHKEY="$(cat "$TS_AUTHKEY_FILE")"
+  fi
+  [ -z "${TS_AUTHKEY:-}" ] && log "WARN: no TS_AUTHKEY/_FILE — tailscale up will block on interactive login"
+
+  log "starting tailscaled (userspace)…"
+  "$TS_BIN_DIR/tailscaled" \
+    --tun=userspace-networking --socket="$TS_SOCK" --statedir="$TS_STATE_DIR" \
+    --socks5-server=localhost:1055 >"$HOME/tailscaled.log" 2>&1 &
+  for _ in $(seq 1 60); do ts status >/dev/null 2>&1 && break; sleep 0.5; done
+
+  TS_HOSTNAME="${TS_HOSTNAME:-pi-$(hostname | tr '[:upper:]' '[:lower:]')}"
+  log "tailscale up as '${TS_HOSTNAME}' (SSH enabled)…"
+  # shellcheck disable=SC2086
+  ts up --ssh --hostname="$TS_HOSTNAME" --accept-routes=false \
+    ${TS_AUTHKEY:+--authkey="$TS_AUTHKEY"} \
+    ${TS_TAGS:+--advertise-tags="$TS_TAGS"} \
+    ${TS_EXTRA_UP_ARGS:-}
+  ts ip -4 2>/dev/null | sed 's/^/[start] tailnet IP: /' >&2 || true
+
+  if [ "${TS_SERVE:-0}" = "1" ]; then
+    log "tailscale serve: tcp ${BRIDGE_PORT:-8000} -> 127.0.0.1:${BRIDGE_PORT:-8000}"
+    ts serve --bg --tcp "${BRIDGE_PORT:-8000}" "tcp://127.0.0.1:${BRIDGE_PORT:-8000}" \
+      || log "WARN: tailscale serve failed (HTTPS certs enabled on the tailnet?)"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Ensure Node (the base session image may not ship it; download a static build)
+# ---------------------------------------------------------------------------
+if ! command -v node >/dev/null 2>&1; then
+  NODE_DIR="${NODE_DIR:-${PI_PERSIST_DIR:-$HOME}/.node}"
+  NODE_VERSION="${NODE_VERSION:-v20.18.1}"
+  if [ ! -x "$NODE_DIR/bin/node" ]; then
+    case "$(uname -m)" in x86_64) na=x64 ;; aarch64|arm64) na=arm64 ;; *) na=x64 ;; esac
+    mkdir -p "$NODE_DIR"
+    log "downloading Node ${NODE_VERSION} (${na})…"
+    curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-${na}.tar.gz" \
+      | tar -xz -C "$NODE_DIR" --strip-components=1
+  fi
+  export PATH="$NODE_DIR/bin:$PATH"
+fi
+log "node: $(command -v node) $(node --version 2>/dev/null)"
+
+# ---------------------------------------------------------------------------
+# 4. pi-bridge
+# ---------------------------------------------------------------------------
+cd "$BRIDGE_DIR"
+[ -d node_modules ] || { log "installing bridge deps…"; npm install; }
+export PORT="${BRIDGE_PORT:-${PORT:-8000}}"
+export HOST="${PI_BRIDGE_HOST:-0.0.0.0}"
+log "starting pi-bridge on ${HOST}:${PORT}"
+exec node --import tsx src/server.ts
