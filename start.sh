@@ -34,10 +34,23 @@ if [ -n "${PI_PERSIST_DIR:-}" ]; then
   fi
 fi
 mkdir -p "$PI_AGENT_DIR/extensions/pi-permission-system"
-[ -f "$PI_AGENT_DIR/settings.json" ] || cp "$PI_SKEL/settings.json" "$PI_AGENT_DIR/settings.json"
+# settings.json is managed config — always refresh it from the baked skeleton.
+cp "$PI_SKEL/settings.json" "$PI_AGENT_DIR/settings.json"
 [ -f "$PI_AGENT_DIR/extensions/pi-permission-system/config.json" ] \
   || cp "$PI_SKEL/permission-system-config.json" \
         "$PI_AGENT_DIR/extensions/pi-permission-system/config.json"
+
+# Model provider config: render models.json, injecting the SDSC vLLM API key from a
+# Renku secret (env SDSC_API_KEY, or SDSC_API_KEY_FILE pointing at a mounted secret).
+if [ -z "${SDSC_API_KEY:-}" ] && [ -n "${SDSC_API_KEY_FILE:-}" ] && [ -f "$SDSC_API_KEY_FILE" ]; then
+  SDSC_API_KEY="$(tr -d '\r\n' < "$SDSC_API_KEY_FILE")"
+fi
+if [ -n "${SDSC_API_KEY:-}" ] && [ -f "$PI_SKEL/models.json" ]; then
+  sed "s|__SDSC_API_KEY__|${SDSC_API_KEY}|g" "$PI_SKEL/models.json" > "$PI_AGENT_DIR/models.json"
+  log "wrote models.json (sdsc provider) with injected API key"
+else
+  log "WARN: no SDSC_API_KEY/_FILE — pi will have no model credentials (expect 401)"
+fi
 
 # ---------------------------------------------------------------------------
 # 2. Tailscale (static userspace binaries — buildpacks can't apt-install a daemon)
