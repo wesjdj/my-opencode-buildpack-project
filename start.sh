@@ -93,7 +93,7 @@ fi
 # ---------------------------------------------------------------------------
 if ! command -v node >/dev/null 2>&1; then
   NODE_DIR="${NODE_DIR:-${PI_PERSIST_DIR:-$HOME}/.node}"
-  NODE_VERSION="${NODE_VERSION:-v20.18.1}"
+  NODE_VERSION="${NODE_VERSION:-v22.22.3}"
   if [ ! -x "$NODE_DIR/bin/node" ]; then
     case "$(uname -m)" in x86_64) na=x64 ;; aarch64|arm64) na=arm64 ;; *) na=x64 ;; esac
     mkdir -p "$NODE_DIR"
@@ -106,11 +106,16 @@ fi
 log "node: $(command -v node) $(node --version 2>/dev/null)"
 
 # ---------------------------------------------------------------------------
-# 4. pi-bridge
+# 4. pi-bridge — run from a WRITABLE copy (/workspace/source is read-only at runtime)
 # ---------------------------------------------------------------------------
-cd "$BRIDGE_DIR"
-[ -d node_modules ] || { log "installing bridge deps…"; npm install; }
+RUN_DIR="${BRIDGE_RUN_DIR:-${PI_PERSIST_DIR:-$HOME}/pi-bridge}"
+mkdir -p "$RUN_DIR"
+# Sync source in; an existing node_modules in RUN_DIR is preserved (cp won't delete it),
+# so deps persist across restarts when RUN_DIR is on the workspace mount.
+cp -R "$BRIDGE_DIR/." "$RUN_DIR/" 2>/dev/null || true
+cd "$RUN_DIR"
+[ -d node_modules ] || { log "installing bridge deps in $RUN_DIR…"; npm install; }
 export PORT="${BRIDGE_PORT:-${PORT:-8000}}"
 export HOST="${PI_BRIDGE_HOST:-0.0.0.0}"
-log "starting pi-bridge on ${HOST}:${PORT}"
+log "starting pi-bridge on ${HOST}:${PORT} (cwd $RUN_DIR)"
 exec node --import tsx src/server.ts
