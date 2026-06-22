@@ -104,6 +104,7 @@ export type ClientCommand =
   | { type: "abort" }
   | { type: "set_model"; provider: string; modelId: string }
   | { type: "set_thinking_level"; level: string }
+  | { type: "list_models" }
   | { type: "get_state" }
   | { type: "get_stats" }
   /** Reply to an `approval_request`. Exactly one of value/confirmed/cancelled is meaningful per method. */
@@ -122,6 +123,7 @@ export type ServerEvent =
   | { type: "history"; messages: WireMessage[] }
   | { type: "state"; state: WireState }
   | { type: "stats"; stats: WireStats }
+  | { type: "models"; models: WireModel[] }
   | { type: "agent_start" }
   | { type: "agent_end"; willRetry: boolean }
   | { type: "turn_end" }

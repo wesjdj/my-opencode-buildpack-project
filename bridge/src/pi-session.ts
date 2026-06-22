@@ -18,7 +18,7 @@ import {
   getAgentDir,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import type { ServerEvent, WireMessage, WireState, WireStats, WireToolCall } from "./protocol.ts";
+import type { ServerEvent, WireMessage, WireModel, WireState, WireStats, WireToolCall } from "./protocol.ts";
 
 type Emit = (event: ServerEvent) => void;
 
@@ -110,6 +110,20 @@ export class PiSession {
   }
   abort() {
     return this.session.abort();
+  }
+
+  /** All models pi knows about (built-in + custom from models.json). */
+  listModels(): WireModel[] {
+    const all = (this.session.modelRegistry.getAll() ?? []) as any[];
+    return all.map((m) => ({ provider: m.provider, id: m.id, name: m.name ?? m.id }));
+  }
+
+  /** Switch the active model. Returns false if no model matches provider+id. */
+  async setModel(provider: string, modelId: string): Promise<boolean> {
+    const model = this.session.modelRegistry.find(provider, modelId);
+    if (!model) return false;
+    await this.session.setModel(model);
+    return true;
   }
 
   resolveApproval(id: string, r: { value?: string; confirmed?: boolean; cancelled?: boolean }): boolean {

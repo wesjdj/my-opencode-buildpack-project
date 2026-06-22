@@ -118,6 +118,7 @@ app.get("/ws", { websocket: true }, async (socket: WebSocket, req) => {
   send({ type: "hello", protocolVersion: PROTOCOL_VERSION, sessionId: st.sessionId, sessionName: st.sessionName, cwd: st.cwd });
   send({ type: "history", messages: pi.history() });
   send({ type: "state", state: st });
+  send({ type: "models", models: pi.listModels() });
 
   socket.on("message", async (raw) => {
     let cmd: ClientCommand;
@@ -162,16 +163,27 @@ async function handleCommand(pi: PiSession, cmd: ClientCommand, send: (e: Server
     case "get_stats":
       send({ type: "stats", stats: pi.stats() });
       break;
+    case "list_models":
+      send({ type: "models", models: pi.listModels() });
+      break;
+    case "set_model": {
+      const ok = await pi.setModel(cmd.provider, cmd.modelId);
+      if (!ok) {
+        send({ type: "error", message: `unknown model: ${cmd.provider}/${cmd.modelId}`, code: "unknown_model" });
+      } else {
+        send({ type: "state", state: pi.state() });
+      }
+      break;
+    }
     case "list_sessions":
       send({ type: "sessions", sessions: await listSessions(cmd.cwd) });
       break;
     case "ping":
       send({ type: "pong" });
       break;
-    case "set_model":
     case "set_thinking_level":
     case "attach":
-      // attach is implied by the WS query param in v1; model/thinking switching is TODO.
+      // attach is implied by the WS query param in v1; thinking-level switching is TODO.
       send({ type: "error", message: `command not yet supported: ${cmd.type}`, code: "unsupported" });
       break;
     default: {
