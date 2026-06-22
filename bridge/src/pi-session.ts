@@ -36,26 +36,48 @@ export class PiSession {
   private streamingMessageId?: string;
   private readonly pendingApprovals = new Map<string, PendingApproval>();
 
-  private constructor(private readonly emit: Emit) {}
+  private constructor(private emit: Emit) {}
 
+  /** Re-point this session's event stream (used when a parked new session is adopted by a WS). */
+  setEmit(emit: Emit): void {
+    this.emit = emit;
+  }
+
+  sessionId(): string {
+    return this.session.sessionId;
+  }
+
+  /** Attach to an existing session file. */
   static async attach(sessionFile: string, cwd: string, emit: Emit): Promise<PiSession> {
     const self = new PiSession(emit);
+    await self.initRuntime(cwd);
+    await self.runtime.switchSession(sessionFile);
+    await self.bind();
+    return self;
+  }
+
+  /** Start a brand-new pi session in `cwd` (file is persisted on first message). */
+  static async create(cwd: string, emit: Emit): Promise<PiSession> {
+    const self = new PiSession(emit);
+    await self.initRuntime(cwd);
+    // The runtime starts with an initial session; force a guaranteed-fresh one.
+    await self.runtime.newSession();
+    await self.bind();
+    return self;
+  }
+
+  /** Build the runtime (shared by attach/create). Leaves the active session unbound. */
+  private async initRuntime(cwd: string): Promise<void> {
     const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd: rtCwd, sessionManager, sessionStartEvent }) => {
       const services = await createAgentSessionServices({ cwd: rtCwd });
       const result = await createAgentSessionFromServices({ services, sessionManager, sessionStartEvent });
       return { ...result, services, diagnostics: services.diagnostics };
     };
-
-    self.runtime = await createAgentSessionRuntime(createRuntime, {
+    this.runtime = await createAgentSessionRuntime(createRuntime, {
       cwd,
       agentDir: getAgentDir(),
       sessionManager: SessionManager.create(cwd),
     });
-
-    // Attach to the requested existing session file, then wire up the live session.
-    await self.runtime.switchSession(sessionFile);
-    await self.bind();
-    return self;
   }
 
   /** Bind the UI context (for approvals) and subscribe to events on the current session. */

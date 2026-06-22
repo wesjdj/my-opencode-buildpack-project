@@ -130,5 +130,7 @@ cd "$RUN_DIR"
 [ -d node_modules ] || { log "installing bridge deps in $RUN_DIR…"; npm install; }
 export PORT="${BRIDGE_PORT:-${PORT:-8000}}"
 export HOST="${PI_BRIDGE_HOST:-0.0.0.0}"
-log "starting pi-bridge on ${HOST}:${PORT} (cwd $RUN_DIR)"
+# New sessions (POST /api/sessions) are created in the project dir, not the bridge run dir.
+export PI_SESSION_CWD="${PI_SESSION_CWD:-${PI_PERSIST_DIR:-$RUN_DIR}}"
+log "starting pi-bridge on ${HOST}:${PORT} (cwd $RUN_DIR, sessions in $PI_SESSION_CWD)"
 exec node --import tsx src/server.ts

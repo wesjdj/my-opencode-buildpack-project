@@ -21,6 +21,25 @@ import { listSessions, resolveSessionFile } from "./sessions-index.ts";
 
 const PORT = Number(process.env.PORT ?? process.env.PI_BRIDGE_PORT ?? 8080);
 const HOST = process.env.HOST ?? "0.0.0.0";
+/** Where freshly-created pi sessions live (the project dir, e.g. /workspace). */
+const DEFAULT_CWD = process.env.PI_SESSION_CWD ?? process.cwd();
+/** How long a created-but-not-yet-attached session is kept alive before being reclaimed. */
+const PENDING_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * New sessions created via `POST /api/sessions` but not yet attached over WS. A brand-new
+ * pi session has no JSONL file on disk until its first message_end, so it can't be found by
+ * `resolveSessionFile` yet — we park the live PiSession here and let the WS adopt it.
+ */
+const pending = new Map<string, { pi: PiSession; timer: ReturnType<typeof setTimeout> }>();
+
+function reclaimPending(id: string) {
+  const entry = pending.get(id);
+  if (!entry) return;
+  clearTimeout(entry.timer);
+  pending.delete(id);
+  void entry.pi.dispose();
+}
 
 const app = Fastify({ logger: true });
 await app.register(websocket);
@@ -32,6 +51,20 @@ app.get("/api/sessions", async (req, reply) => {
   if (!tokenValid(token)) return reply.code(401).send({ error: "unauthorized" });
   const cwd = (req.query as { cwd?: string }).cwd;
   return listSessions(cwd);
+});
+
+app.post("/api/sessions", async (req, reply) => {
+  const token = tokenFromRequest(req.url, req.headers.authorization);
+  if (!tokenValid(token)) return reply.code(401).send({ error: "unauthorized" });
+  const cwd = (req.body as { cwd?: string } | undefined)?.cwd ?? DEFAULT_CWD;
+  // Create the live session now (buffered with a no-op emit) and park it; the client
+  // attaches over WS in the next step and adopts this same PiSession. It lands on disk
+  // normally once its first message completes.
+  const pi = await PiSession.create(cwd, () => {});
+  const st = pi.state();
+  const timer = setTimeout(() => reclaimPending(st.sessionId), PENDING_TTL_MS);
+  pending.set(st.sessionId, { pi, timer });
+  return { sessionId: st.sessionId, cwd: st.cwd };
 });
 
 app.get("/ws", { websocket: true }, async (socket: WebSocket, req) => {
@@ -53,22 +86,31 @@ app.get("/ws", { websocket: true }, async (socket: WebSocket, req) => {
     return;
   }
 
-  const sessionFile = await resolveSessionFile(sessionId);
-  if (!sessionFile) {
-    send({ type: "error", message: `session not found: ${sessionId}`, code: "not_found" });
-    socket.close(1008, "not_found");
-    return;
-  }
-
   let pi: PiSession;
-  try {
-    const summary = (await listSessions()).find((s) => s.sessionFile === sessionFile)!;
-    pi = await PiSession.attach(sessionFile, summary.cwd, send);
-  } catch (err) {
-    app.log.error({ err }, "failed to attach session");
-    send({ type: "error", message: `attach failed: ${(err as Error).message}`, code: "attach_failed" });
-    socket.close(1011, "attach_failed");
-    return;
+  const parked = pending.get(sessionId);
+  if (parked) {
+    // Adopt the session created by POST /api/sessions: stop the reclaim timer and
+    // re-point its event stream at this socket.
+    clearTimeout(parked.timer);
+    pending.delete(sessionId);
+    pi = parked.pi;
+    pi.setEmit(send);
+  } else {
+    const sessionFile = await resolveSessionFile(sessionId);
+    if (!sessionFile) {
+      send({ type: "error", message: `session not found: ${sessionId}`, code: "not_found" });
+      socket.close(1008, "not_found");
+      return;
+    }
+    try {
+      const summary = (await listSessions()).find((s) => s.sessionFile === sessionFile)!;
+      pi = await PiSession.attach(sessionFile, summary.cwd, send);
+    } catch (err) {
+      app.log.error({ err }, "failed to attach session");
+      send({ type: "error", message: `attach failed: ${(err as Error).message}`, code: "attach_failed" });
+      socket.close(1011, "attach_failed");
+      return;
+    }
   }
 
   // Greet + backfill history + current state so a cold client renders immediately.
@@ -132,6 +174,11 @@ async function handleCommand(pi: PiSession, cmd: ClientCommand, send: (e: Server
       // attach is implied by the WS query param in v1; model/thinking switching is TODO.
       send({ type: "error", message: `command not yet supported: ${cmd.type}`, code: "unsupported" });
       break;
+    default: {
+      const _exhaustive: never = cmd;
+      send({ type: "error", message: `unknown command: ${(_exhaustive as any).type}`, code: "unknown_command" });
+      break;
+    }
   }
 }
 
