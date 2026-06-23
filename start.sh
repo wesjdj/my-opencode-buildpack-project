@@ -102,20 +102,8 @@ if [ "${TS_ENABLE:-1}" = "1" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Ensure Node (the base session image may not ship it; download a static build)
+# 3. Node is pre-installed by the Node Engine buildpack
 # ---------------------------------------------------------------------------
-if ! command -v node >/dev/null 2>&1; then
-  NODE_DIR="${NODE_DIR:-${PI_PERSIST_DIR:-$HOME}/.node}"
-  NODE_VERSION="${NODE_VERSION:-v22.22.3}"
-  if [ ! -x "$NODE_DIR/bin/node" ]; then
-    case "$(uname -m)" in x86_64) na=x64 ;; aarch64|arm64) na=arm64 ;; *) na=x64 ;; esac
-    mkdir -p "$NODE_DIR"
-    log "downloading Node ${NODE_VERSION} (${na})…"
-    curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-${na}.tar.gz" \
-      | tar -xz -C "$NODE_DIR" --strip-components=1
-  fi
-  export PATH="$NODE_DIR/bin:$PATH"
-fi
 log "node: $(command -v node) $(node --version 2>/dev/null)"
 
 # ---------------------------------------------------------------------------

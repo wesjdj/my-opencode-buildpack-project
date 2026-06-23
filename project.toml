@@ -1,7 +1,8 @@
 # Renku 2.0 code-based build. We deliberately DON'T try to make the bridge a buildpack
 # "frontend" — the build just produces a normal session image with our repo source in it
 # (/workspace/source). The session's start command/args are overridden at the launcher /
-# Amalthea level to run start.sh, which self-bootstraps Node + Tailscale and runs the bridge.
+# Amalthea level to run start.sh, which runs the bridge. Node is pre-installed by the
+# Node Engine buildpack, so no runtime download is needed.
 #
 # Uses the SDSC selector builder (same one the opencode buildpack used). Frontend is
 # whatever — jupyterlab — since we override the command anyway.
@@ -11,6 +12,12 @@ schema-version = "0.2"
 
 [io.buildpacks]
 builder = "ghcr.io/swissdatasciencecenter/renku-frontend-buildpacks/selector:0.4.0"
+
+[[io.buildpacks.group]]
+uri = "docker://ghcr.io/wesjdj/renku-opencode-buildpack:0.1.0"
+
+[[io.buildpacks.group]]
+uri = "docker://gcr.io/paketo-buildpacks/node-engine:0.34.0"
 
 [[io.buildpacks.build.env]]
 name = "BP_RENKU_FRONTENDS"
