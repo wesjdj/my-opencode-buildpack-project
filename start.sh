@@ -119,24 +119,45 @@ fi
 log "node: $(command -v node) $(node --version 2>/dev/null)"
 
 # ---------------------------------------------------------------------------
-# 4. Start opencode web server (port 8001) — runs alongside pi-bridge
+# 3b. pi-web — browser UI for Pi Coding Agent (port 8001)
 # ---------------------------------------------------------------------------
-if command -v opencode >/dev/null 2>&1; then
-  log "starting opencode serve on port 8001..."
-  nohup opencode serve --port 8001 --hostname 0.0.0.0 --mdns > "${HOME}/opencode.log" 2>&1 &
-  OPencode_PID=$!
-  sleep 2
-  if ! kill -0 "$OPencode_PID" 2>/dev/null; then
-    log "WARN: opencode serve failed to start (logs: ${HOME}/opencode.log)"
-  else
-    log "opencode server started (PID: $OPencode_PID)"
-  fi
+PI_WEB_DATA_DIR="${PI_WEB_DATA_DIR:-${PI_PERSIST_DIR:-$HOME}/pi-web}"
+mkdir -p "$PI_WEB_DATA_DIR"
+
+if ! command -v pi-web >/dev/null 2>&1; then
+  log "installing pi-web globally…"
+  npm install -g @jmfederico/pi-web --prefix "$PI_WEB_DATA_DIR" 2>&1 | tail -5
+  log "pi-web installed"
 else
-  log "WARN: opencode not found — skipping web server startup"
+  log "pi-web already installed"
+fi
+
+# Start session daemon (owns active Pi sessions, keeps them alive across browser disconnects)
+log "starting pi-web session daemon…"
+PI_WEB_SESSIOND_LOG="$PI_WEB_DATA_DIR/sessiond.log"
+nohup pi-web-sessiond > "$PI_WEB_SESSIOND_LOG" 2>&1 &
+PI_WEB_SESSIOND_PID=$!
+sleep 2
+if ! kill -0 "$PI_WEB_SESSIOND_PID" 2>/dev/null; then
+  log "WARN: pi-web sessiond failed to start (logs: $PI_WEB_SESSIOND_LOG)"
+else
+  log "pi-web sessiond started (PID: $PI_WEB_SESSIOND_PID)"
+fi
+
+# Start pi-web web server (serves browser UI + API)
+log "starting pi-web web server on port 8001…"
+PI_WEB_SERVER_LOG="$PI_WEB_DATA_DIR/web.log"
+nohup pi-web --port 8001 --host 0.0.0.0 > "$PI_WEB_SERVER_LOG" 2>&1 &
+PI_WEB_SERVER_PID=$!
+sleep 2
+if ! kill -0 "$PI_WEB_SERVER_PID" 2>/dev/null; then
+  log "WARN: pi-web server failed to start (logs: $PI_WEB_SERVER_LOG)"
+else
+  log "pi-web server started on port 8001 (PID: $PI_WEB_SERVER_PID)"
 fi
 
 # ---------------------------------------------------------------------------
-# 5. pi-bridge — run from a WRITABLE copy (/workspace/source is read-only at runtime)
+# 4. pi-bridge — run from a WRITABLE copy (/workspace/source is read-only at runtime)
 # ---------------------------------------------------------------------------
 RUN_DIR="${BRIDGE_RUN_DIR:-${PI_PERSIST_DIR:-$HOME}/pi-bridge}"
 mkdir -p "$RUN_DIR"
