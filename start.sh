@@ -119,7 +119,24 @@ fi
 log "node: $(command -v node) $(node --version 2>/dev/null)"
 
 # ---------------------------------------------------------------------------
-# 4. pi-bridge — run from a WRITABLE copy (/workspace/source is read-only at runtime)
+# 4. Start opencode web server (port 8001) — runs alongside pi-bridge
+# ---------------------------------------------------------------------------
+if command -v opencode >/dev/null 2>&1; then
+  log "starting opencode serve on port 8001..."
+  nohup opencode serve --port 8001 --hostname 0.0.0.0 --mdns > "${HOME}/opencode.log" 2>&1 &
+  OPencode_PID=$!
+  sleep 2
+  if ! kill -0 "$OPencode_PID" 2>/dev/null; then
+    log "WARN: opencode serve failed to start (logs: ${HOME}/opencode.log)"
+  else
+    log "opencode server started (PID: $OPencode_PID)"
+  fi
+else
+  log "WARN: opencode not found — skipping web server startup"
+fi
+
+# ---------------------------------------------------------------------------
+# 5. pi-bridge — run from a WRITABLE copy (/workspace/source is read-only at runtime)
 # ---------------------------------------------------------------------------
 RUN_DIR="${BRIDGE_RUN_DIR:-${PI_PERSIST_DIR:-$HOME}/pi-bridge}"
 mkdir -p "$RUN_DIR"
