@@ -128,9 +128,10 @@ if ! command -v pi-web >/dev/null 2>&1; then
   log "installing pi-web globally…"
   npm install -g @jmfederico/pi-web --prefix "$PI_WEB_DATA_DIR" 2>&1 | tail -5
   log "pi-web installed"
-else
-  log "pi-web already installed"
 fi
+# Make pi-web binaries available
+export PATH="$PI_WEB_DATA_DIR/bin:$PATH"
+log "pi-web binaries: $(which pi-web-sessiond 2>/dev/null || echo 'not found')"
 
 # Start session daemon (owns active Pi sessions, keeps them alive across browser disconnects)
 log "starting pi-web session daemon…"
