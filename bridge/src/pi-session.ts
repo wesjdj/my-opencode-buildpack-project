@@ -165,10 +165,14 @@ export class PiSession {
     return this.session.abort();
   }
 
-  /** All models pi knows about (built-in + custom from models.json). */
+  /**
+   * Models the user can actually use — only those with auth configured (the injected SDSC
+   * key, an API key, or OAuth), not pi's full built-in catalogue. `getAvailable()` is a fast
+   * check that doesn't refresh OAuth tokens.
+   */
   listModels(): WireModel[] {
-    const all = (this.session.modelRegistry.getAll() ?? []) as any[];
-    return all.map((m) => ({ provider: m.provider, id: m.id, name: m.name ?? m.id }));
+    const available = (this.session.modelRegistry.getAvailable() ?? []) as any[];
+    return available.map((m) => ({ provider: m.provider, id: m.id, name: m.name ?? m.id }));
   }
 
   /** Switch the active model. Returns false if no model matches provider+id. */
