@@ -116,6 +116,19 @@ button { font-family: inherit; }
 #session-title { font-weight: 700; color: var(--text-bright); }
 #session-sub { color: var(--muted); font-size: 11px; }
 
+/* View toggles — hide thinking / tool usage (class-driven, applies to all messages) */
+#view-toggles { margin-left: auto; display: flex; gap: 6px; align-self: center; }
+.view-toggle {
+  font-size: 11px; cursor: pointer;
+  background: var(--surface-2); border: 1px solid var(--border);
+  color: var(--text); border-radius: 999px; padding: 3px 10px;
+}
+.view-toggle:hover { border-color: var(--user-border); color: var(--text-bright); }
+.view-toggle.off { color: var(--dim); opacity: .6; text-decoration: line-through; }
+
+body.hide-thinking .thinking { display: none; }
+body.hide-tools .tool { display: none; }
+
 #transcript { flex: 1; overflow-y: auto; padding: 20px 16px 28px; min-height: 0; }
 .transcript-head { max-width: 860px; margin: 0 auto 18px; text-align: center; color: var(--dim); font-size: 11px; letter-spacing: .08em; }
 

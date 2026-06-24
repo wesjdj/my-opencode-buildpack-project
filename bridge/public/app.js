@@ -425,6 +425,11 @@ function renderHistoryMessage(m) {
 }
 
 function startMessage(m) {
+  // The user's own messages are rendered optimistically on submit (single source of truth
+  // for live input). The bridge also echoes them back as message_start/message_end events;
+  // ignore that echo here so the message isn't painted twice. History reload is a separate
+  // path (renderHistoryMessage) and still shows user messages correctly.
+  if (m.role === "user") return;
   const node = makeBubble(m.role || "assistant");
   // While streaming, render as plain pre-wrap text (cheap); finalize to markdown on end.
   node.wrap.classList.add("streaming");
@@ -456,6 +461,7 @@ function appendDelta(messageId, kind, delta) {
 }
 
 function endMessage(m) {
+  if (m.role === "user") return; // see startMessage: user echoes are rendered optimistically
   const node = state.msgNodes.get(m.id);
   if (!node) {
     renderHistoryMessage(m);
@@ -855,6 +861,49 @@ async function createSession() {
   } catch (err) {
     notify(`Failed to create session: ${err.message}`, "error");
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * View toggles — hide thinking / tool usage
+ *
+ * Class-driven: each button toggles a class on <body>, and CSS hides every
+ * matching node at once (existing, streaming, and future). No re-render, and
+ * the underlying content stays in the DOM so toggling back is instant.
+ * The choice is persisted in localStorage (best-effort — it can throw in a
+ * sandboxed iframe, hence the try/catch).
+ * ------------------------------------------------------------------ */
+const VIEW_TOGGLES = [
+  { btn: "toggle-thinking", cls: "hide-thinking", key: "pi-bridge:hide-thinking" },
+  { btn: "toggle-tools", cls: "hide-tools", key: "pi-bridge:hide-tools" },
+];
+function prefGet(key) {
+  try {
+    return localStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+function prefSet(key, hidden) {
+  try {
+    localStorage.setItem(key, hidden ? "1" : "0");
+  } catch {
+    /* storage unavailable (sandboxed/private) — toggle still works for the session */
+  }
+}
+for (const t of VIEW_TOGGLES) {
+  const btn = $(t.btn);
+  if (!btn) continue;
+  const apply = (hidden) => {
+    document.body.classList.toggle(t.cls, hidden);
+    btn.classList.toggle("off", hidden);
+    btn.setAttribute("aria-pressed", String(!hidden)); // pressed = content shown
+  };
+  apply(prefGet(t.key));
+  btn.addEventListener("click", () => {
+    const hidden = !document.body.classList.contains(t.cls);
+    prefSet(t.key, hidden);
+    apply(hidden);
+  });
 }
 
 /* ------------------------------------------------------------------ *

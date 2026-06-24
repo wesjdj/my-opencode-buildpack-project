@@ -27,6 +27,8 @@ iframe — a root-absolute SPA (like upstream pi-web) cannot.
 
 - Markdown rendering of messages (safe, escape-first, no deps), collapsible tool calls,
   inline approval cards, copy-per-message, streaming text/thinking, live stats bar.
+- **Hide thinking / tool usage** — topbar toggles that class `<body>` so CSS hides all
+  matching blocks at once (no re-render; content stays in the DOM). Persisted in `localStorage`.
 - **Model picker** and **thinking-level** switch (pills in the composer).
 - **Image attachments** (📎 → carried on the next `prompt`).
 - **`@` file mentions** — autocomplete over `GET /api/files?q=&cwd=` (session-cwd file index).
