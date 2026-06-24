@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      __BASE__ is replaced by the server with RENKU_BASE_URL_PATH (e.g. "/sessions/abc/").
+      Renku proxies the session under that prefix WITHOUT stripping it, so a correct <base>
+      is what makes every relative URL below (app.css, app.js, fetch("api/..."), the WS URL)
+      resolve to the prefixed path. This is the whole reason this UI works in an iframe where
+      pi-web did not. Do not change relative URLs to absolute ones.
+    -->
+    <base href="__BASE__" />
+    <title>pi-bridge</title>
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <div id="app">
+      <aside id="sidebar">
+        <header class="sidebar-head">
+          <h1>pi-bridge</h1>
+          <div class="sidebar-actions">
+            <button id="btn-new" type="button" title="New session">+ New</button>
+            <button id="btn-refresh" type="button" title="Refresh sessions">⟳</button>
+          </div>
+        </header>
+        <ul id="session-list" aria-label="Sessions"></ul>
+        <footer id="sidebar-foot"><span id="conn-status" class="disconnected">disconnected</span></footer>
+      </aside>
+
+      <main id="main">
+        <header id="topbar">
+          <div id="session-title">No session selected</div>
+          <div id="session-meta"></div>
+          <button id="btn-abort" type="button" hidden>Abort</button>
+        </header>
+
+        <div id="transcript" aria-live="polite"></div>
+
+        <form id="composer" autocomplete="off">
+          <textarea id="input" rows="2" placeholder="Select or create a session…" disabled></textarea>
+          <button id="btn-send" type="submit" disabled>Send</button>
+        </form>
+      </main>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

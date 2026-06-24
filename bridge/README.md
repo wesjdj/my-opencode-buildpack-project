@@ -1,11 +1,27 @@
 # pi-bridge
 
 Host-side bridge that exposes a [pi-agent](https://github.com/earendil-works) session over
-WebSocket so the watchOS/iOS clients in this repo can drive it. It embeds the pi SDK
-(`@earendil-works/pi-coding-agent`) directly — no subprocess parsing.
+WebSocket so clients can drive it. It embeds the pi SDK (`@earendil-works/pi-coding-agent`)
+directly — no subprocess parsing. Two clients share one protocol:
+
+- the **watchOS/iOS PiKit** apps in this repo, and
+- a **browser chat UI** served from `public/` at the bridge's own origin.
 
 In production this runs **inside a Renku 2.0 session** as the session's exposed app; the
 Renku gateway provides TLS + user auth in front of it. It also runs standalone for local dev.
+
+## Serving behind Renku's proxy (base path)
+
+Renku proxies a session under `RENKU_BASE_URL_PATH` (e.g. `/sessions/<id>/`) and **does not
+strip** that prefix before forwarding — exactly like JupyterLab's `--ServerApp.base_url`. So
+the bridge mounts every route (UI, `/api`, `/ws`) under that base, and **also** at root so
+direct access (e.g. over Tailscale, where the pod port is hit without the proxy prefix) keeps
+working for the mobile clients. `/healthz` stays unprefixed for k8s liveness probes.
+
+The browser client never hardcodes an origin or `/`: the server injects the base into
+`index.html`'s `<base href>`, and `app.js` resolves every fetch/WebSocket URL relative to
+`document.baseURI`. That relative-only discipline is what makes it work inside the Renku
+iframe — a root-absolute SPA (like upstream pi-web) cannot.
 
 ## What it does
 
@@ -47,9 +63,10 @@ The test client prints streamed deltas and auto-approves any approval request.
 
 | Var | Default | Purpose |
 |-----|---------|---------|
-| `PORT` / `PI_BRIDGE_PORT` | `8080` | Listen port (the Renku session app port). |
-| `HOST` | `0.0.0.0` | Bind address. |
-| `PI_BRIDGE_TOKEN` | _(unset)_ | Shared bearer token checked on `/api/*` and WS upgrade. Unset ⇒ auth disabled (dev). In Renku, inject via the session's `env_variable_overrides`. |
+| `PORT` / `PI_BRIDGE_PORT` / `RENKU_SESSION_PORT` | `8080` | Listen port (the Renku session app port). |
+| `HOST` / `RENKU_SESSION_IP` | `0.0.0.0` | Bind address. |
+| `RENKU_BASE_URL_PATH` | `/` | Path prefix the session is proxied under. All routes are mounted here (and at root). Set by Renku at runtime. |
+| `PI_BRIDGE_TOKEN` | _(unset)_ | Shared bearer token checked on `/api/*` and WS upgrade. Unset ⇒ auth disabled (dev). In Renku, inject via the session's `env_variable_overrides`. The browser UI forwards it via `?token=` (passed to the page URL). |
 
 ## Layout
 
@@ -60,6 +77,9 @@ The test client prints streamed deltas and auto-approves any approval request.
 | `src/sessions-index.ts` | Read-only filesystem index of `~/.pi/agent/sessions/`. |
 | `src/server.ts` | Fastify REST + `@fastify/websocket`. |
 | `src/auth.ts` | Shared-token check (defense in depth behind the gateway). |
+| `public/index.html` | Browser UI shell. `<base href="__BASE__">` is templated by the server. |
+| `public/app.js` | Vanilla-JS chat client (no build step). All URLs relative to `document.baseURI`. |
+| `public/app.css` | UI styles. |
 | `test/wsclient.ts` | Manual smoke-test client. |
 
 ## Notes
