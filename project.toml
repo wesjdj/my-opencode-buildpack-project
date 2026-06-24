@@ -17,7 +17,7 @@ builder = "ghcr.io/swissdatasciencecenter/renku-frontend-buildpacks/selector:0.4
 uri = "docker://ghcr.io/wesjdj/renku-opencode-buildpack:0.1.0"
 
 [[io.buildpacks.group]]
-uri = "docker://gcr.io/paketo-buildpacks/node-engine:0.34.0"
+uri = "docker://docker.io/paketobuildpacks/node-engine"
 
 [[io.buildpacks.build.env]]
 name = "BP_RENKU_FRONTENDS"
