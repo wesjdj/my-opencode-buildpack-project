@@ -19,3 +19,7 @@ value = "jupyterlab"
 [[io.buildpacks.build.env]]
 name = "BP_RENKU_AI_AGENTS"
 value = "coding-agent"
+
+[[io.buildpacks.build.env]]
+name = "BP_NODE_VERSION"
+value = "~22"
