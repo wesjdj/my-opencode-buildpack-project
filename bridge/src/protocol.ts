@@ -70,6 +70,12 @@ export interface WireModel {
   name: string;
 }
 
+/** A slash command the agent exposes (for the composer's `/` menu). */
+export interface WireCommand {
+  name: string;
+  description?: string;
+}
+
 export interface WireState {
   sessionId: string;
   sessionName?: string;
@@ -105,6 +111,7 @@ export type ClientCommand =
   | { type: "set_model"; provider: string; modelId: string }
   | { type: "set_thinking_level"; level: string }
   | { type: "list_models" }
+  | { type: "list_commands" }
   | { type: "get_state" }
   | { type: "get_stats" }
   /** Reply to an `approval_request`. Exactly one of value/confirmed/cancelled is meaningful per method. */
@@ -124,6 +131,7 @@ export type ServerEvent =
   | { type: "state"; state: WireState }
   | { type: "stats"; stats: WireStats }
   | { type: "models"; models: WireModel[] }
+  | { type: "commands"; commands: WireCommand[] }
   | { type: "agent_start" }
   | { type: "agent_end"; willRetry: boolean }
   | { type: "turn_end" }

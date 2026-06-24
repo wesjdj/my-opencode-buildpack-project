@@ -23,12 +23,32 @@ The browser client never hardcodes an origin or `/`: the server injects the base
 `document.baseURI`. That relative-only discipline is what makes it work inside the Renku
 iframe — a root-absolute SPA (like upstream pi-web) cannot.
 
+### Browser UI features
+
+- Markdown rendering of messages (safe, escape-first, no deps), collapsible tool calls,
+  inline approval cards, copy-per-message, streaming text/thinking, live stats bar.
+- **Model picker** and **thinking-level** switch (pills in the composer).
+- **Image attachments** (📎 → carried on the next `prompt`).
+- **`@` file mentions** — autocomplete over `GET /api/files?q=&cwd=` (session-cwd file index).
+- **`/` commands** — extension/skill commands execute via `prompt()` when typed; the `/` menu's
+  name-autocomplete is empty in the headless SDK surface (`getCommands` is an extension/RPC API,
+  not on the session).
+
+### Session persistence
+
+Sessions are kept **running across browser disconnects** (a live registry in `server.ts`,
+keyed by sessionId), like pi-web's `sessiond`. Closing the tab or a proxy hiccup no longer
+kills a running turn; a reconnect re-adopts the same `PiSession`. A detached session is
+reclaimed only after an idle TTL (or a short pending TTL if a created session is never attached).
+
 ## What it does
 
 - Lists pi sessions from `~/.pi/agent/sessions/` (`GET /api/sessions`).
 - Attaches to one session over WebSocket (`/ws?session=<id>`), backfills history + state,
   then streams live events (assistant text/thinking deltas, tool calls, turn/agent lifecycle).
-- Accepts commands: `prompt`, `steer`, `follow_up`, `abort`, `get_state`, `get_stats`, `list_sessions`.
+- Accepts commands: `prompt` (with optional `images`), `steer`, `follow_up`, `abort`,
+  `set_model`, `set_thinking_level`, `list_models`, `list_commands`, `get_state`, `get_stats`,
+  `list_sessions`.
 - **Approvals:** pi's permission prompts (the `pi-permission-system` `edit/write/git → ask`
   config) surface through the SDK `ExtensionUIContext` and are forwarded as `approval_request`
   events; the client replies with `approval_response`. The full N-option permission menu is

@@ -18,7 +18,19 @@ import {
   getAgentDir,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import type { ServerEvent, WireMessage, WireModel, WireState, WireStats, WireToolCall } from "./protocol.ts";
+import type {
+  ServerEvent,
+  WireCommand,
+  WireImage,
+  WireMessage,
+  WireModel,
+  WireState,
+  WireStats,
+  WireToolCall,
+} from "./protocol.ts";
+
+/** pi's reasoning-effort levels (SDK `ThinkingLevel`). */
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 
 type Emit = (event: ServerEvent) => void;
 
@@ -94,11 +106,35 @@ export class PiSession {
    * Commands (driven by the WS connection)
    * ------------------------------------------------------------------ */
 
-  async prompt(text: string): Promise<void> {
+  async prompt(text: string, images?: WireImage[]): Promise<void> {
+    const imgs = toImageContent(images);
     if (this.session.isStreaming) {
+      // Mid-turn steering is text-only; attachments only make sense when opening a turn.
       await this.session.steer(text);
     } else {
-      await this.session.prompt(text);
+      await this.session.prompt(text, imgs ? { images: imgs } : undefined);
+    }
+  }
+
+  /** Set the reasoning-effort level. Returns false for an unknown level. */
+  async setThinkingLevel(level: string): Promise<boolean> {
+    if (!(THINKING_LEVELS as readonly string[]).includes(level)) return false;
+    await (this.session as { setThinkingLevel(l: string): Promise<void> | void }).setThinkingLevel(level);
+    return true;
+  }
+
+  /** Slash commands the agent exposes (best-effort; empty if the SDK build has none). */
+  async getCommands(): Promise<WireCommand[]> {
+    const fn = (this.session as { getCommands?: () => unknown }).getCommands;
+    if (typeof fn !== "function") return [];
+    try {
+      const res = await fn.call(this.session);
+      const arr = Array.isArray(res) ? (res as any[]) : [];
+      return arr
+        .map((c) => ({ name: String(c?.name ?? c?.command ?? ""), description: c?.description ?? c?.summary ?? "" }))
+        .filter((c) => c.name);
+    } catch {
+      return [];
     }
   }
 
@@ -312,6 +348,12 @@ export class PiSession {
 /* ------------------------------------------------------------------ *
  * Structural helpers (resilient to sub-package type drift)
  * ------------------------------------------------------------------ */
+
+/** WireImage[] -> SDK ImageContent[] ({ type:'image', data, mime_type }). */
+function toImageContent(images?: WireImage[]): any[] | undefined {
+  if (!images?.length) return undefined;
+  return images.map((im) => ({ type: "image", data: im.data, mime_type: im.mimeType }));
+}
 
 function blocksOf(content: unknown): any[] {
   if (typeof content === "string") return [{ type: "text", text: content }];

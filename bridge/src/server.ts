@@ -30,6 +30,7 @@ import { PiSession } from "./pi-session.ts";
 import type { ClientCommand, ServerEvent } from "./protocol.ts";
 import { PROTOCOL_VERSION } from "./protocol.ts";
 import { listSessions, resolveSessionFile } from "./sessions-index.ts";
+import { listProjectFiles } from "./files-index.ts";
 
 const PORT = Number(process.env.PORT ?? process.env.PI_BRIDGE_PORT ?? process.env.RENKU_SESSION_PORT ?? 8080);
 const HOST = process.env.HOST ?? process.env.RENKU_SESSION_IP ?? "0.0.0.0";
@@ -57,18 +58,43 @@ function normalizeBase(raw: string | undefined): string {
 const BASE = normalizeBase(process.env.RENKU_BASE_URL_PATH);
 
 /**
- * New sessions created via `POST /api/sessions` but not yet attached over WS. A brand-new
- * pi session has no JSONL file on disk until its first message_end, so it can't be found by
- * `resolveSessionFile` yet — we park the live PiSession here and let the WS adopt it.
+ * Live PiSession registry, keyed by sessionId. Unlike a stateless attach-per-socket model,
+ * sessions are kept RUNNING across browser disconnects (like pi-web's sessiond) so a long
+ * agent turn survives a tab close or a flaky proxy. A reconnect re-adopts the same PiSession.
+ *
+ * `socket` is the currently-attached WS (null when detached). When no socket is attached we
+ * schedule a reclaim timer; the session is disposed only if it is still detached when it
+ * fires. Brand-new sessions (POST /api/sessions, no JSONL on disk yet) live here too — they
+ * just start detached with a short pending TTL until a WS adopts them.
  */
-const pending = new Map<string, { pi: PiSession; timer: ReturnType<typeof setTimeout> }>();
+interface LiveSession {
+  pi: PiSession;
+  socket: WebSocket | null;
+  reclaimTimer: ReturnType<typeof setTimeout> | null;
+}
+const live = new Map<string, LiveSession>();
 
-function reclaimPending(id: string) {
-  const entry = pending.get(id);
+/** Idle detached session is reclaimed after this long; a created-but-never-attached one sooner. */
+const IDLE_TTL_MS = 30 * 60 * 1000;
+
+function clearReclaim(entry: LiveSession): void {
+  if (entry.reclaimTimer) {
+    clearTimeout(entry.reclaimTimer);
+    entry.reclaimTimer = null;
+  }
+}
+
+function scheduleReclaim(id: string, ttl: number): void {
+  const entry = live.get(id);
   if (!entry) return;
-  clearTimeout(entry.timer);
-  pending.delete(id);
-  void entry.pi.dispose();
+  clearReclaim(entry);
+  entry.reclaimTimer = setTimeout(() => {
+    const e = live.get(id);
+    if (e && !e.socket) {
+      live.delete(id);
+      void e.pi.dispose();
+    }
+  }, ttl);
 }
 
 const app = Fastify({ logger: true });
@@ -116,17 +142,24 @@ const appRoutes: FastifyPluginAsync<{ uiBase: string }> = async (fastify, { uiBa
     return listSessions(cwd);
   });
 
+  fastify.get("/api/files", async (req, reply) => {
+    const token = tokenFromRequest(req.url, req.headers.authorization);
+    if (!tokenValid(token)) return reply.code(401).send({ error: "unauthorized" });
+    const { q, cwd } = req.query as { q?: string; cwd?: string };
+    return listProjectFiles(cwd || DEFAULT_CWD, { query: q, limit: 50 });
+  });
+
   fastify.post("/api/sessions", async (req, reply) => {
     const token = tokenFromRequest(req.url, req.headers.authorization);
     if (!tokenValid(token)) return reply.code(401).send({ error: "unauthorized" });
     const cwd = (req.body as { cwd?: string } | undefined)?.cwd ?? DEFAULT_CWD;
-    // Create the live session now (buffered with a no-op emit) and park it; the client
-    // attaches over WS in the next step and adopts this same PiSession. It lands on disk
-    // normally once its first message completes.
+    // Create the live session now (detached, with a no-op emit); the client adopts it over
+    // WS in the next step. It lands on disk once its first message completes. A short pending
+    // TTL reclaims it if no WS ever attaches.
     const pi = await PiSession.create(cwd, () => {});
     const st = pi.state();
-    const timer = setTimeout(() => reclaimPending(st.sessionId), PENDING_TTL_MS);
-    pending.set(st.sessionId, { pi, timer });
+    live.set(st.sessionId, { pi, socket: null, reclaimTimer: null });
+    scheduleReclaim(st.sessionId, PENDING_TTL_MS);
     return { sessionId: st.sessionId, cwd: st.cwd };
   });
 
@@ -149,15 +182,20 @@ const appRoutes: FastifyPluginAsync<{ uiBase: string }> = async (fastify, { uiBa
       return;
     }
 
-    let pi: PiSession;
-    const parked = pending.get(sessionId);
-    if (parked) {
-      // Adopt the session created by POST /api/sessions: stop the reclaim timer and
-      // re-point its event stream at this socket.
-      clearTimeout(parked.timer);
-      pending.delete(sessionId);
-      pi = parked.pi;
-      pi.setEmit(send);
+    let entry = live.get(sessionId);
+    if (entry) {
+      // Re-adopt a live session: stop its reclaim timer, take over from any prior socket
+      // (last attach wins), and re-point its event stream at this socket.
+      clearReclaim(entry);
+      if (entry.socket && entry.socket !== socket) {
+        try {
+          entry.socket.close(4000, "superseded");
+        } catch {
+          /* ignore */
+        }
+      }
+      entry.socket = socket;
+      entry.pi.setEmit(send);
     } else {
       const sessionFile = await resolveSessionFile(sessionId);
       if (!sessionFile) {
@@ -167,7 +205,9 @@ const appRoutes: FastifyPluginAsync<{ uiBase: string }> = async (fastify, { uiBa
       }
       try {
         const summary = (await listSessions()).find((s) => s.sessionFile === sessionFile)!;
-        pi = await PiSession.attach(sessionFile, summary.cwd, send);
+        const pi = await PiSession.attach(sessionFile, summary.cwd, send);
+        entry = { pi, socket, reclaimTimer: null };
+        live.set(sessionId, entry);
       } catch (err) {
         fastify.log.error({ err }, "failed to attach session");
         send({ type: "error", message: `attach failed: ${(err as Error).message}`, code: "attach_failed" });
@@ -175,6 +215,7 @@ const appRoutes: FastifyPluginAsync<{ uiBase: string }> = async (fastify, { uiBa
         return;
       }
     }
+    const pi = entry.pi;
 
     // Greet + backfill history + current state so a cold client renders immediately.
     const st = pi.state();
@@ -199,7 +240,14 @@ const appRoutes: FastifyPluginAsync<{ uiBase: string }> = async (fastify, { uiBa
     });
 
     socket.on("close", () => {
-      void pi.dispose();
+      // Keep the session RUNNING; just detach. A no-op emit absorbs any events that fire
+      // while no browser is attached (the next reconnect catches up via `history`).
+      const e = live.get(sessionId);
+      if (e && e.socket === socket) {
+        e.socket = null;
+        e.pi.setEmit(() => {});
+        scheduleReclaim(sessionId, IDLE_TTL_MS);
+      }
     });
   });
 };
@@ -213,7 +261,7 @@ if (BASE !== "/") await app.register(appRoutes, { prefix: BASE, uiBase });
 async function handleCommand(pi: PiSession, cmd: ClientCommand, send: (e: ServerEvent) => void): Promise<void> {
   switch (cmd.type) {
     case "prompt":
-      await pi.prompt(cmd.text);
+      await pi.prompt(cmd.text, cmd.images);
       break;
     case "steer":
       await pi.steer(cmd.text);
@@ -236,6 +284,18 @@ async function handleCommand(pi: PiSession, cmd: ClientCommand, send: (e: Server
     case "list_models":
       send({ type: "models", models: pi.listModels() });
       break;
+    case "list_commands":
+      send({ type: "commands", commands: await pi.getCommands() });
+      break;
+    case "set_thinking_level": {
+      const ok = await pi.setThinkingLevel(cmd.level);
+      if (!ok) {
+        send({ type: "error", message: `unknown thinking level: ${cmd.level}`, code: "unknown_thinking_level" });
+      } else {
+        send({ type: "state", state: pi.state() });
+      }
+      break;
+    }
     case "set_model": {
       const ok = await pi.setModel(cmd.provider, cmd.modelId);
       if (!ok) {
@@ -251,9 +311,8 @@ async function handleCommand(pi: PiSession, cmd: ClientCommand, send: (e: Server
     case "ping":
       send({ type: "pong" });
       break;
-    case "set_thinking_level":
     case "attach":
-      // attach is implied by the WS query param in v1; thinking-level switching is TODO.
+      // attach is implied by the WS query param in v1.
       send({ type: "error", message: `command not yet supported: ${cmd.type}`, code: "unsupported" });
       break;
     default: {
