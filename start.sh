@@ -142,7 +142,9 @@ fi
 # Start pi-web web server (serves browser UI + API)
 log "starting pi-web web server on port 8001…"
 PI_WEB_SERVER_LOG="$PI_WEB_DATA_DIR/web.log"
-nohup pi-web --port 8001 --host 0.0.0.0 > "$PI_WEB_SERVER_LOG" 2>&1 &
+export PI_WEB_PORT=8001
+export PI_WEB_HOST=0.0.0.0
+nohup pi-web-server > "$PI_WEB_SERVER_LOG" 2>&1 &
 PI_WEB_SERVER_PID=$!
 sleep 2
 if ! kill -0 "$PI_WEB_SERVER_PID" 2>/dev/null; then
