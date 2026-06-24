@@ -16,6 +16,10 @@
  * URL helpers (proxy-safe)
  * ------------------------------------------------------------------ */
 const BASE = document.baseURI; // absolute, includes the Renku prefix + trailing slash
+
+// Like code-server in Renku, this UI runs behind the gateway with no app-level auth. An
+// optional ?token= is still forwarded for local dev / direct (Tailscale) access where the
+// bridge may have PI_BRIDGE_TOKEN set; in a normal Renku session there is no token.
 const TOKEN = new URLSearchParams(location.search).get("token") || "";
 
 function authHeaders() {

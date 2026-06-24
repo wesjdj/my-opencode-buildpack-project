@@ -66,7 +66,7 @@ The test client prints streamed deltas and auto-approves any approval request.
 | `PORT` / `PI_BRIDGE_PORT` / `RENKU_SESSION_PORT` | `8080` | Listen port (the Renku session app port). |
 | `HOST` / `RENKU_SESSION_IP` | `0.0.0.0` | Bind address. |
 | `RENKU_BASE_URL_PATH` | `/` | Path prefix the session is proxied under. All routes are mounted here (and at root). Set by Renku at runtime. |
-| `PI_BRIDGE_TOKEN` | _(unset)_ | Shared bearer token checked on `/api/*` and WS upgrade. Unset ⇒ auth disabled (dev). In Renku, inject via the session's `env_variable_overrides`. The browser UI forwards it via `?token=` (passed to the page URL). |
+| `PI_BRIDGE_TOKEN` | _(unset)_ | Optional shared bearer token checked on `/api/*` and WS upgrade. **Leave unset in Renku** — like code-server (`--auth none`), the gateway authenticates and the app trusts it. Set it only to add a token on the direct (Tailscale) path for the mobile clients; the browser UI then needs `?token=` in the URL. |
 
 ## Layout
 
