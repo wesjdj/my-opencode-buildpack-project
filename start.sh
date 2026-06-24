@@ -104,7 +104,13 @@ fi
 # ---------------------------------------------------------------------------
 # 3. Node is pre-installed by the Node Engine buildpack
 # ---------------------------------------------------------------------------
-log "node: $(command -v node) $(node --version 2>/dev/null)"
+NODE_ENGINE_PATH="/layers/paketo-buildpacks_node-engine/node/bin"
+if [ -x "$NODE_ENGINE_PATH/node" ]; then
+  export PATH="$NODE_ENGINE_PATH:$PATH"
+  log "node: $(command -v node) $(node --version 2>/dev/null)"
+else
+  log "WARN: node-engine layer not found at $NODE_ENGINE_PATH"
+fi
 
 # ---------------------------------------------------------------------------
 # 3b. pi-web — browser UI for Pi Coding Agent (port 8001)
