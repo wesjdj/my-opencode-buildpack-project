@@ -123,19 +123,36 @@ export class PiSession {
     return true;
   }
 
-  /** Slash commands the agent exposes (best-effort; empty if the SDK build has none). */
+  /**
+   * Slash commands the agent can actually run headless: extension- and skill-registered
+   * commands (the ones `session.prompt("/name")` dispatches). NOT the TUI built-ins
+   * (`/settings`, `/compact`, …) — those are owned by the interactive mode and would be sent
+   * to the model verbatim here.
+   *
+   * `getCommands` is not on AgentSession's public surface; it lives on the extension runtime
+   * held by the (private) extension runner. We prefer a public method if a future SDK adds
+   * one, then fall back to the internal runner. Defensive: any failure yields [] so the `/`
+   * menu just stays empty. Verified against @earendil-works/pi-coding-agent@0.79.6.
+   */
   async getCommands(): Promise<WireCommand[]> {
-    const fn = (this.session as { getCommands?: () => unknown }).getCommands;
-    if (typeof fn !== "function") return [];
-    try {
-      const res = await fn.call(this.session);
-      const arr = Array.isArray(res) ? (res as any[]) : [];
-      return arr
-        .map((c) => ({ name: String(c?.name ?? c?.command ?? ""), description: c?.description ?? c?.summary ?? "" }))
-        .filter((c) => c.name);
-    } catch {
-      return [];
+    const sess = this.session as any;
+    const sources: Array<() => unknown> = [];
+    if (typeof sess.getCommands === "function") sources.push(() => sess.getCommands());
+    const runtime = (sess._extensionRunner ?? sess.extensionRunner)?.runtime;
+    if (runtime && typeof runtime.getCommands === "function") sources.push(() => runtime.getCommands());
+
+    for (const get of sources) {
+      try {
+        const res = await get();
+        const cmds = (Array.isArray(res) ? res : [])
+          .map((c: any) => ({ name: String(c?.name ?? c?.command ?? ""), description: c?.description ?? c?.summary ?? "" }))
+          .filter((c: WireCommand) => c.name);
+        if (cmds.length) return cmds;
+      } catch {
+        /* try the next source */
+      }
     }
+    return [];
   }
 
   steer(text: string) {

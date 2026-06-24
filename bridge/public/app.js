@@ -744,7 +744,7 @@ function updateAutocomplete() {
   if (input.disabled) return closeAC();
   const pos = input.selectionStart ?? input.value.length;
   const before = input.value.slice(0, pos);
-  const slash = before.match(/^\/(\w*)$/); // only at the very start of the message
+  const slash = before.match(/^\/([\w:-]*)$/); // only at the very start of the message
   const at = before.match(/(?:^|\s)@([^\s@]*)$/);
   if (slash) showCommandAC(slash[1]);
   else if (at) showFileAC(at[1], pos - at[1].length - 1, pos);

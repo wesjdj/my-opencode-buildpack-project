@@ -30,9 +30,10 @@ iframe — a root-absolute SPA (like upstream pi-web) cannot.
 - **Model picker** and **thinking-level** switch (pills in the composer).
 - **Image attachments** (📎 → carried on the next `prompt`).
 - **`@` file mentions** — autocomplete over `GET /api/files?q=&cwd=` (session-cwd file index).
-- **`/` commands** — extension/skill commands execute via `prompt()` when typed; the `/` menu's
-  name-autocomplete is empty in the headless SDK surface (`getCommands` is an extension/RPC API,
-  not on the session).
+- **`/` commands** — the menu lists the extension- and skill-registered commands the agent can
+  actually run headless (sourced from the extension runtime; see `pi-session.getCommands`), and
+  selecting one dispatches via `prompt("/name")`. TUI-only built-ins (`/settings`, `/compact`, …)
+  are intentionally excluded — they're owned by the interactive mode and wouldn't execute here.
 
 ### Session persistence
 
