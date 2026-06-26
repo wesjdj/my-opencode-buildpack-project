@@ -1,0 +1,363 @@
+diff --git a/.smoke-home/.pi/agent/auth.json b/.smoke-home/.pi/agent/auth.json
+new file mode 100644
+index 0000000..9e26dfe
+--- /dev/null
++++ b/.smoke-home/.pi/agent/auth.json
+@@ -0,0 +1 @@
++{}
+\ No newline at end of file
+diff --git a/src/client/index.html b/src/client/index.html
+index 59dfe94..8747670 100644
+--- a/src/client/index.html
++++ b/src/client/index.html
+@@ -5,9 +5,17 @@
+     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+     <title>PI WEB</title>
+     <meta name="theme-color" content="#0d1117" />
+-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+-    <link rel="manifest" href="/manifest.webmanifest" />
++    <!--
++      __BASE__ is replaced at request time by the server with RENKU_BASE_URL_PATH (e.g.
++      "/sessions/<id>/"), which Renku proxies under WITHOUT stripping. A correct <base> makes
++      every relative URL below — and Vite's hashed asset URLs (vite base: "./") — resolve under
++      the prefix. document.baseURI then reflects it for the REST/WS helpers (src/api/base.ts).
++      Keep these links RELATIVE; do not reintroduce leading slashes.
++    -->
++    <base href="__BASE__" />
++    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
++    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
++    <link rel="manifest" href="manifest.webmanifest" />
+     <style>
+       :root {
+         color-scheme: dark;
+@@ -53,6 +61,6 @@
+   </head>
+   <body>
+     <pi-web-app></pi-web-app>
+-    <script type="module" src="/src/main.ts"></script>
++    <script type="module" src="src/main.ts"></script>
+   </body>
+ </html>
+diff --git a/src/client/src/api.ts b/src/client/src/api.ts
+index c6cbeb7..a6eb3e0 100644
+--- a/src/client/src/api.ts
++++ b/src/client/src/api.ts
+@@ -1,3 +1,4 @@
++export { apiUrl } from "./api/base";
+ export { activityApi, api, configApi, filesApi, gitApi, machinesApi, piWebApi, pluginsApi, projectsApi, sessionsApi, terminalsApi, workspacesApi } from "./api/clients";
+ export { globalSessionEvents, realtimeEvents, sessionEvents, terminalSocket } from "./api/sockets";
+ export type { ArchiveSessionsResponse, AuthProviderOption, AuthProviderStatus, AuthProvidersResponse, AuthStatusSource, AuthType, CommandOption, CommandResult, DeleteWorkspaceFileResponse, FileContentMediaType, FileContentResponse, FileSuggestion, FileTreeEntry, FileTreeResponse, GitDiffResponse, GitFileState, GitStatusFile, GitStatusResponse, Machine, MachineHealth, MachineKind, MachineRuntime, MachineStatus, MessagePage, ModelSelectionResponse, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, OAuthFlowState, PiWebCapability, PiWebComponentStatus, PiWebConfigEnvOverrides, PiWebConfigResponse, PiWebConfigValues, PiWebInstallationInfo, PiWebPluginConfig, PiWebPluginConfigMap, PiWebPluginInfo, PiWebPluginsResponse, PiWebPluginScope, PiWebPluginSettings, PiWebReleaseStatus, PiWebRuntimeComponent, PiWebRuntimeResponse, PiWebShortcutConfig, PiWebStatusMessage, PiWebStatusResponse, Project, PromptAttachment, QueuedSessionMessage, RealtimeEvent, RunTerminalCommandInput, SavedPromptAttachment, SessionActivity, SessionInfo, SessionModel, SessionRef, SessionStatus, SlashCommand, SessionUiEvent, TerminalCommandRun, TerminalCommandRunFilter, TerminalCommandRunHandle, TerminalCommandRunStatus, TerminalInfo, TerminalUiEvent, ThinkingLevel, ThinkingLevelsResponse, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse, Workspace, WorkspaceActivity, WorkspaceActivityResponse, WorkspaceActivityUiEvent } from "../../shared/apiTypes";
+diff --git a/src/client/src/api/base.ts b/src/client/src/api/base.ts
+new file mode 100644
+index 0000000..9d67f62
+--- /dev/null
++++ b/src/client/src/api/base.ts
+@@ -0,0 +1,26 @@
++// Runtime deployment base.
++//
++// PI WEB normally serves from the root origin ("/"). Behind Renku the session is proxied
++// under RENKU_BASE_URL_PATH (e.g. "/sessions/<id>/") and that prefix is NOT stripped before
++// reaching us. The server templates the real prefix into <base href> in index.html, so every
++// relative URL — including Vite's hashed asset URLs — resolves against it. We read it back
++// through document.baseURI so REST and WebSocket URLs carry the prefix too. Do not read
++// location.host / hardcode "/api" anywhere else; route through the two helpers below.
++
++const deploymentBase = new URL(".", document.baseURI); // normalized; always ends in "/"
++
++/**
++ * Resolve an app path ("/api/…") against the deployment base.
++ * Idempotent: already-absolute URLs (http(s)://…) pass through unchanged, so it is safe to
++ * wrap a builder whose result may later be handed to request() (which also calls apiUrl()).
++ */
++export function apiUrl(path: string): string {
++  return new URL(path.replace(/^\/+/u, ""), deploymentBase).toString();
++}
++
++/** ws(s):// origin + base path, with NO trailing slash — callers append "/api/…". */
++export function webSocketBaseUrl(): string {
++  const url = new URL(deploymentBase.href);
++  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
++  return url.href.replace(/\/$/u, "");
++}
+diff --git a/src/client/src/api/clients.ts b/src/client/src/api/clients.ts
+index 375a589..fd38030 100644
+--- a/src/client/src/api/clients.ts
++++ b/src/client/src/api/clients.ts
+@@ -1,4 +1,5 @@
+ import type { DeleteWorkspaceFileResponse, FileSuggestion, MoveWorkspaceFileOptions, PiWebConfigValues, PromptAttachment, RunTerminalCommandInput, SessionRef, TerminalCommandRun, TerminalCommandRunFilter, WriteWorkspaceFileOptions } from "../../../shared/apiTypes";
++import { apiUrl } from "./base";
+ import { request } from "./http";
+ import {
+   arrayOf,
+@@ -202,7 +203,7 @@ export const terminalsApi = {
+ };
+ 
+ async function getOptionalTerminalCommandRun(runId: string, machineId: string): Promise<TerminalCommandRun | undefined> {
+-  const response = await fetch(`${machinePrefix(machineId)}/terminal-command-runs/${encodeURIComponent(runId)}`);
++  const response = await fetch(apiUrl(`${machinePrefix(machineId)}/terminal-command-runs/${encodeURIComponent(runId)}`));
+   if (response.status === 404) return undefined;
+   if (!response.ok) {
+     const body: unknown = await response.json().catch((): unknown => ({}));
+diff --git a/src/client/src/api/http.ts b/src/client/src/api/http.ts
+index dd553ff..05e0043 100644
+--- a/src/client/src/api/http.ts
++++ b/src/client/src/api/http.ts
+@@ -1,7 +1,9 @@
++import { apiUrl } from "./base";
++
+ export async function request<T>(url: string, parse: (value: unknown) => T, init?: RequestInit): Promise<T> {
+   const headers = new Headers(init?.headers);
+   if (init?.body !== undefined && !headers.has("content-type")) headers.set("content-type", "application/json");
+-  const response = await fetch(url, { ...init, headers });
++  const response = await fetch(apiUrl(url), { ...init, headers });
+   if (!response.ok) {
+     const body: unknown = await response.json().catch((): unknown => ({}));
+     throw new Error(errorMessage(body) ?? response.statusText);
+diff --git a/src/client/src/api/sockets.ts b/src/client/src/api/sockets.ts
+index a709bd0..78ddf58 100644
+--- a/src/client/src/api/sockets.ts
++++ b/src/client/src/api/sockets.ts
+@@ -1,4 +1,5 @@
+ import type { SessionRef } from "../../../shared/apiTypes";
++import { webSocketBaseUrl } from "./base";
+ 
+ type SessionLookup = SessionRef | string;
+ 
+@@ -25,8 +26,3 @@ export function realtimeEvents(machineId = "local"): WebSocket {
+ function machinePrefix(machineId: string): string {
+   return `/api/machines/${encodeURIComponent(machineId)}`;
+ }
+-
+-function webSocketBaseUrl(): string {
+-  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+-  return `${protocol}//${location.host}`;
+-}
+diff --git a/src/client/src/api/urls.ts b/src/client/src/api/urls.ts
+index 744c82d..b803eef 100644
+--- a/src/client/src/api/urls.ts
++++ b/src/client/src/api/urls.ts
+@@ -1,4 +1,5 @@
+ import type { SessionRef } from "../../../shared/apiTypes";
++import { apiUrl } from "./base";
+ 
+ type SessionLookup = SessionRef | string;
+ 
+@@ -15,7 +16,7 @@ export function machineGitDiffUrl(machineId: string, projectId: string, workspac
+   if (options?.path !== undefined) params.set("path", options.path);
+   if (options?.staged === true) params.set("staged", "true");
+   const query = params.toString();
+-  return `/api/machines/${encodeURIComponent(machineId)}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/git/diff${query ? `?${query}` : ""}`;
++  return apiUrl(`/api/machines/${encodeURIComponent(machineId)}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/git/diff${query ? `?${query}` : ""}`);
+ }
+ 
+ export function messageUrl(session: SessionLookup, options?: { limit?: number; before?: number }, machineId = "local"): string {
+@@ -25,7 +26,7 @@ export function messageUrl(session: SessionLookup, options?: { limit?: number; b
+   if (options?.limit !== undefined) params.set("limit", String(options.limit));
+   if (options?.before !== undefined) params.set("before", String(options.before));
+   const query = params.toString();
+-  return `/api/machines/${encodeURIComponent(machineId)}/sessions/${encodeURIComponent(sessionId(session))}/messages${query === "" ? "" : `?${query}`}`;
++  return apiUrl(`/api/machines/${encodeURIComponent(machineId)}/sessions/${encodeURIComponent(sessionId(session))}/messages${query === "" ? "" : `?${query}`}`);
+ }
+ 
+ export function workspaceImagePreviewUrl(projectId: string, workspaceId: string, path: string, options?: { modifiedAt?: string; machineId?: string }): string {
+@@ -33,5 +34,5 @@ export function workspaceImagePreviewUrl(projectId: string, workspaceId: string,
+   params.set("path", path);
+   if (options?.modifiedAt !== undefined) params.set("v", options.modifiedAt);
+   const prefix = `/api/machines/${encodeURIComponent(options?.machineId ?? "local")}`;
+-  return `${prefix}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/file/preview?${params.toString()}`;
++  return apiUrl(`${prefix}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/file/preview?${params.toString()}`);
+ }
+diff --git a/src/client/src/components/PiWebApp.ts b/src/client/src/components/PiWebApp.ts
+index f520115..d75be8a 100644
+--- a/src/client/src/components/PiWebApp.ts
++++ b/src/client/src/components/PiWebApp.ts
+@@ -1,6 +1,6 @@
+ import { LitElement, html } from "lit";
+ import { customElement, query, state } from "lit/decorators.js";
+-import { configApi, piWebApi, terminalsApi, workspacesApi, type Machine, type MachineHealth, type PiWebConfigValues, type PiWebShortcutConfig, type Project, type RealtimeEvent, type SessionInfo, type TerminalCommandRun, type TerminalUiEvent, type Workspace } from "../api";
++import { apiUrl, configApi, piWebApi, terminalsApi, workspacesApi, type Machine, type MachineHealth, type PiWebConfigValues, type PiWebShortcutConfig, type Project, type RealtimeEvent, type SessionInfo, type TerminalCommandRun, type TerminalUiEvent, type Workspace } from "../api";
+ import type { AppAction } from "../actions";
+ import { initialAppState, type AppState } from "../appState";
+ import { isSessionActive } from "../../../shared/activity";
+@@ -1374,7 +1374,7 @@ export class PiWebApp extends LitElement {
+     const existing = this.machinePluginLoadPromises.get(machine.id);
+     if (existing !== undefined) return existing;
+ 
+-    const load = this.registerExternalPlugins(`PI WEB plugins from ${machine.name}`, () => loadExternalPlugins(`/api/machines/${encodeURIComponent(machine.id)}/pi-web-plugins/manifest.json`, {
++    const load = this.registerExternalPlugins(`PI WEB plugins from ${machine.name}`, () => loadExternalPlugins(apiUrl(`/api/machines/${encodeURIComponent(machine.id)}/pi-web-plugins/manifest.json`), {
+       machineId: machine.id,
+       shouldLoadPlugin: (entry) => this.plugins.shouldLoadRemotePlugin(entry.id, entry.machineSpecific),
+     }))
+diff --git a/src/server/app.ts b/src/server/app.ts
+index cff2a3c..25d6b77 100644
+--- a/src/server/app.ts
++++ b/src/server/app.ts
+@@ -1,7 +1,8 @@
+ import { existsSync } from "node:fs";
++import { readFile } from "node:fs/promises";
+ import { dirname, join } from "node:path";
+ import { fileURLToPath } from "node:url";
+-import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
++import Fastify, { type FastifyInstance, type FastifyReply, type FastifyServerOptions } from "fastify";
+ import fastifyStatic from "@fastify/static";
+ import fastifyWebsocket from "@fastify/websocket";
+ import { ProjectStore } from "./storage/projectStore.js";
+@@ -98,7 +99,14 @@ function registerLocalFileSuggestionRoutes(app: FastifyInstance, projects: Proje
+ 
+ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInstance> {
+   const app = Fastify({ logger: deps.logger ?? true, ...(deps.bodyLimit === undefined ? {} : { bodyLimit: deps.bodyLimit }) });
+-  await app.register(fastifyWebsocket);
++
++  // Renku proxies the session under RENKU_BASE_URL_PATH and does NOT strip the prefix
++  // (like JupyterLab's base_url). Every route — API, WS, static — is mounted under it via an
++  // encapsulated scope below. basePrefix has no trailing slash (Fastify prefix); baseHref has
++  // one (for <base href> and asset resolution). Empty/"/" => behaves exactly as upstream.
++  const rawBase = process.env["RENKU_BASE_URL_PATH"] ?? "/";
++  const basePrefix = rawBase.replace(/\/+$/u, ""); // "" | "/sessions/<id>"
++  const baseHref = `${basePrefix}/`; // "/" | "/sessions/<id>/"
+ 
+   const projects = deps.projects ?? new ProjectService(new ProjectStore());
+   const workspaces = deps.workspaces ?? new WorkspaceService();
+@@ -112,50 +120,65 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
+     localRuntime: () => getPiWebRuntime(sessionDaemon),
+   });
+ 
+-  app.get("/pi-web-plugins/manifest.json", async () => piWebPlugins.manifest());
+-
+-  app.get<{ Params: { pluginId: string; "*": string } }>("/pi-web-plugins/:pluginId/*", async (request, reply) => {
+-    if (await proxyMachinePluginAsset(machines, request.params.pluginId, request.params["*"], request.url, reply)) return;
+-
+-    const asset = await piWebPlugins.readAsset(request.params.pluginId, request.params["*"]);
+-    if (asset === undefined) return reply.code(404).send({ error: "Plugin asset not found" });
+-    return reply.type(asset.contentType).send(asset.content);
+-  });
+-
+-  app.get("/api/pi-web/status", async () => piWebStatusCache.get());
+-  app.get("/api/pi-web/version", async () => getPiWebVersionStatus(sessionDaemon));
+-  app.get("/api/pi-web/runtime", async () => getPiWebRuntime(sessionDaemon));
+-  app.get("/api/plugins", async () => piWebPlugins.plugins());
+-  registerConfigRoutes(app, configService);
+-
+-  registerMachineRoutes(app, machines);
+-  registerMachinePluginProxyRoutes(app, machines);
+-
+-  registerLocalProjectRoutes(app, projects, workspaces, "/api");
+-  registerLocalProjectRoutes(app, projects, workspaces, "/api/machines/local");
+-
+-  registerSessionProxyRoutes(app, sessionDaemon);
+-  registerSessionProxyRoutes(app, sessionDaemon, "/api/machines/local");
+-  registerWorkspaceExplorerRoutes(app, projects, workspaces, "/api", { config: configService });
+-  registerWorkspaceExplorerRoutes(app, projects, workspaces, "/api/machines/local", { config: configService });
+-  registerGitRoutes(app, projects, workspaces);
+-  registerGitRoutes(app, projects, workspaces, "/api/machines/local");
+-  registerTerminalProxyRoutes(app, projects, workspaces, sessionDaemon);
+-  registerTerminalProxyRoutes(app, projects, workspaces, sessionDaemon, "/api/machines/local");
+-  registerWorkspaceDeletionRoutes(app, projects, workspaces, sessionDaemon);
+-  registerWorkspaceDeletionRoutes(app, projects, workspaces, sessionDaemon, "/api/machines/local");
+-
+-  registerLocalFileSuggestionRoutes(app, projects, workspaces, "/api", { config: configService });
+-  registerLocalFileSuggestionRoutes(app, projects, workspaces, "/api/machines/local", { config: configService });
+-
+-  registerMachineProxyRoutes(app, machines);
+-
+-  const packagedClientDist = join(dirname(fileURLToPath(import.meta.url)), "..", "client");
+-  const clientDist = deps.clientDist ?? (existsSync(packagedClientDist) ? packagedClientDist : join(process.cwd(), "dist", "client"));
+-  if (clientDist !== false && existsSync(clientDist)) {
+-    await app.register(fastifyStatic, { root: clientDist });
+-    app.setNotFoundHandler((_request, reply) => reply.sendFile("index.html"));
+-  }
++  // Everything below is registered inside one encapsulated scope mounted at `basePrefix`, so
++  // Fastify prepends the prefix to every route (the route-internal "/api" namespaces nest
++  // under it). `app`->`scope` is the only change to the registrations themselves.
++  await app.register(async (scope) => {
++    // WebSocket support must live in (an ancestor of) the scope that owns the WS routes.
++    await scope.register(fastifyWebsocket);
++
++    scope.get("/pi-web-plugins/manifest.json", async () => piWebPlugins.manifest());
++
++    scope.get<{ Params: { pluginId: string; "*": string } }>("/pi-web-plugins/:pluginId/*", async (request, reply) => {
++      if (await proxyMachinePluginAsset(machines, request.params.pluginId, request.params["*"], request.url, reply)) return;
++
++      const asset = await piWebPlugins.readAsset(request.params.pluginId, request.params["*"]);
++      if (asset === undefined) return reply.code(404).send({ error: "Plugin asset not found" });
++      return reply.type(asset.contentType).send(asset.content);
++    });
++
++    scope.get("/api/pi-web/status", async () => piWebStatusCache.get());
++    scope.get("/api/pi-web/version", async () => getPiWebVersionStatus(sessionDaemon));
++    scope.get("/api/pi-web/runtime", async () => getPiWebRuntime(sessionDaemon));
++    scope.get("/api/plugins", async () => piWebPlugins.plugins());
++    registerConfigRoutes(scope, configService);
++
++    registerMachineRoutes(scope, machines);
++    registerMachinePluginProxyRoutes(scope, machines);
++
++    registerLocalProjectRoutes(scope, projects, workspaces, "/api");
++    registerLocalProjectRoutes(scope, projects, workspaces, "/api/machines/local");
++
++    registerSessionProxyRoutes(scope, sessionDaemon);
++    registerSessionProxyRoutes(scope, sessionDaemon, "/api/machines/local");
++    registerWorkspaceExplorerRoutes(scope, projects, workspaces, "/api", { config: configService });
++    registerWorkspaceExplorerRoutes(scope, projects, workspaces, "/api/machines/local", { config: configService });
++    registerGitRoutes(scope, projects, workspaces);
++    registerGitRoutes(scope, projects, workspaces, "/api/machines/local");
++    registerTerminalProxyRoutes(scope, projects, workspaces, sessionDaemon);
++    registerTerminalProxyRoutes(scope, projects, workspaces, sessionDaemon, "/api/machines/local");
++    registerWorkspaceDeletionRoutes(scope, projects, workspaces, sessionDaemon);
++    registerWorkspaceDeletionRoutes(scope, projects, workspaces, sessionDaemon, "/api/machines/local");
++
++    registerLocalFileSuggestionRoutes(scope, projects, workspaces, "/api", { config: configService });
++    registerLocalFileSuggestionRoutes(scope, projects, workspaces, "/api/machines/local", { config: configService });
++
++    registerMachineProxyRoutes(scope, machines);
++
++    const packagedClientDist = join(dirname(fileURLToPath(import.meta.url)), "..", "client");
++    const clientDist = deps.clientDist ?? (existsSync(packagedClientDist) ? packagedClientDist : join(process.cwd(), "dist", "client"));
++    if (clientDist !== false && existsSync(clientDist)) {
++      // Serve the SPA shell ourselves so __BASE__ is templated; static handles hashed assets.
++      // index:false stops @fastify/static returning the raw (un-templated) index.html.
++      await scope.register(fastifyStatic, { root: clientDist, index: false });
++      const sendIndex = async (_request: unknown, reply: FastifyReply): Promise<void> => {
++        const html = (await readFile(join(clientDist, "index.html"), "utf8")).replaceAll("__BASE__", baseHref);
++        await reply.type("text/html").send(html);
++      };
++      scope.get("/", sendIndex);
++      scope.setNotFoundHandler(sendIndex); // SPA deep links + client-side (query) routing
++    }
++  }, { prefix: basePrefix || "/" });
+ 
+   return app;
+ }
+diff --git a/src/server/sessiond/sessionProxyRoutes.ts b/src/server/sessiond/sessionProxyRoutes.ts
+index a61715a..02a3a62 100644
+--- a/src/server/sessiond/sessionProxyRoutes.ts
++++ b/src/server/sessiond/sessionProxyRoutes.ts
+@@ -46,7 +46,12 @@ export function registerSessionProxyRoutes(app: FastifyInstance, daemon: Session
+ function stripPrefix(url: string, prefix: string): string {
+   const path = url.split("?", 1)[0] ?? url;
+   const query = url.slice(path.length);
+-  const stripped = path.startsWith(prefix) ? `${path.slice(prefix.length)}${query}` : url;
++  // The route prefix (e.g. "/api/machines/local") may be preceded by a reverse-proxy base path
++  // (Renku's RENKU_BASE_URL_PATH is NOT stripped before reaching us), so request.url is
++  // "<base>/api/...". Strip everything up to and including the prefix, not just a leading match,
++  // so the daemon receives the bare path it expects (e.g. "/activity", "/sessions/<id>/...").
++  const at = path.indexOf(prefix);
++  const stripped = at >= 0 ? `${path.slice(at + prefix.length)}${query}` : url;
+   return stripped === "" ? "/" : stripped;
+ }
+ 
+diff --git a/vite.config.ts b/vite.config.ts
+index 2fc150a..138f9a7 100644
+--- a/vite.config.ts
++++ b/vite.config.ts
+@@ -91,6 +91,9 @@ function devDocsPlugin(): Plugin {
+ }
+ 
+ export default defineConfig({
++  // Relative asset URLs so the built app works under any path prefix (Renku's
++  // RENKU_BASE_URL_PATH) without knowing it at build time. Resolved against <base href>.
++  base: "./",
+   plugins: [devDocsPlugin()],
+   root: "src/client",
+   build: {
